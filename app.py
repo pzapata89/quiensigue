@@ -19,14 +19,43 @@ INGENIEROS = [
     "Moises Diaz",
 ]
 
+# Orden rotativo de turnos nocturnos
+ROTACION_CC = [
+    "Felipe Becerra",
+    "Pedro Zapata",
+    "Juan Zuniga",
+    "Pedro Quezada",
+    "Felipe Dominguez",
+    "Moises Diaz",
+]
+
 # ── Conexión a Supabase ──────────────────────────────────────────────────────
 conn = st.connection("supabase", type=SupabaseConnection)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-def dias_ganados_por_fecha(f: date) -> int:
-    """Lunes–Viernes → 1 | Sábado–Domingo → 2."""
-    return 2 if f.weekday() >= 5 else 1
+DIAS_POR_CC = 1
+
+
+def quien_sigue(df: pd.DataFrame) -> tuple[str, str | None]:
+    """
+    Devuelve (siguiente, ultimo) según el último CC registrado en la rotación.
+    Si no hay registros, retorna el primero de la rotación y None como último.
+    """
+    ccs = df[df["tipo"] == "Control Nocturno"].copy()
+    if ccs.empty:
+        return ROTACION_CC[0], None
+
+    ultimo = ccs.sort_values(["fecha", "created_at"], ascending=False).iloc[0]["ingeniero"]
+
+    if ultimo in ROTACION_CC:
+        idx = ROTACION_CC.index(ultimo)
+        siguiente = ROTACION_CC[(idx + 1) % len(ROTACION_CC)]
+    else:
+        # Ingeniero no está en la rotación: empezar desde el inicio
+        siguiente = ROTACION_CC[0]
+
+    return siguiente, ultimo
 
 
 @st.cache_data(ttl=30)
@@ -55,6 +84,14 @@ def insertar_control(ingeniero, fecha, tipo, dias_ganados, dias_usados, descripc
 # ── Título ───────────────────────────────────────────────────────────────────
 st.title("🌙 ¿QuiénSigue?")
 st.caption("Gestión de turnos nocturnos y días compensatorios")
+
+# Banner: siguiente en la rotación (se calcula con los datos frescos)
+_df_banner = get_controles()
+_siguiente, _ultimo = quien_sigue(_df_banner)
+_info = f"**{_siguiente}**"
+if _ultimo:
+    _info += f"  ·  *(último CC: {_ultimo})*"
+st.info(f"### 👉 Próximo en hacer el CC: {_info}", icon="🔔")
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 tab_dash, tab_turno, tab_canje, tab_hist = st.tabs([
@@ -120,6 +157,16 @@ with tab_dash:
             hide_index=True,
         )
 
+        st.divider()
+        st.subheader("🔄 Orden de rotación")
+
+        siguiente_dash, _ = quien_sigue(df)
+        rotacion_df = pd.DataFrame({
+            "Turno": [f"{'👉 ' if ing == siguiente_dash else ''}{i + 1}" for i, ing in enumerate(ROTACION_CC)],
+            "Ingeniero": ROTACION_CC,
+        })
+        st.dataframe(rotacion_df, use_container_width=True, hide_index=True)
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # REGISTRAR TURNO NOCTURNO
@@ -135,12 +182,7 @@ with tab_turno:
             placeholder="Ej: Deploy versión 3.2 en producción…",
         )
 
-        dias = dias_ganados_por_fecha(fecha)
-        tipo_dia = "fin de semana 🎉" if fecha.weekday() >= 5 else "día laboral"
-        st.info(
-            f"📅 **{fecha.strftime('%A %d/%m/%Y')}** ({tipo_dia}) → "
-            f"**+{dias} día(s) compensatorio(s)**"
-        )
+        st.info(f"📅 **{fecha.strftime('%A %d/%m/%Y')}** → **+{DIAS_POR_CC} día compensatorio**")
 
         submitted = st.form_submit_button(
             "💾 Guardar turno", use_container_width=True, type="primary"
@@ -150,14 +192,14 @@ with tab_turno:
         insertar_control(
             ingeniero, fecha,
             tipo="Control Nocturno",
-            dias_ganados=dias,
+            dias_ganados=DIAS_POR_CC,
             dias_usados=0,
             descripcion=descripcion,
         )
         st.balloons()
         st.success(
             f"✅ Turno de **{ingeniero}** del **{fecha.strftime('%d/%m/%Y')}** "
-            f"registrado correctamente (+{dias} día(s))."
+            f"registrado correctamente (+{DIAS_POR_CC} día)."
         )
 
 
