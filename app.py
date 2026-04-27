@@ -29,6 +29,23 @@ ROTACION_CC = [
     "Moises Diaz",
 ]
 
+def _login_gate():
+    if st.session_state.get("autenticado"):
+        return
+    st.title("🌙 ¿QuiénSigue?")
+    with st.form("login"):
+        pwd = st.text_input("Contraseña", type="password")
+        ok = st.form_submit_button("Entrar", use_container_width=True, type="primary")
+    if ok:
+        if pwd == st.secrets["app"]["password"]:
+            st.session_state["autenticado"] = True
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta.")
+    st.stop()
+
+_login_gate()
+
 INGENIEROS_TRANSPORTE = ["Moises Diaz", "Felipe Dominguez"]
 
 # ── Conexión a Supabase ──────────────────────────────────────────────────────
