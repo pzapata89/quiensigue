@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from st_supabase_connection import SupabaseConnection
 
 # ── Configuración de página ──────────────────────────────────────────────────
@@ -28,6 +28,8 @@ ROTACION_CC = [
     "Felipe Dominguez",
     "Moises Diaz",
 ]
+
+INGENIEROS_TRANSPORTE = ["Moises Diaz", "Felipe Dominguez"]
 
 # ── Conexión a Supabase ──────────────────────────────────────────────────────
 conn = st.connection("supabase", type=SupabaseConnection)
@@ -169,38 +171,80 @@ with tab_dash:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# REGISTRAR TURNO NOCTURNO
+# REGISTRAR TURNO
 # ════════════════════════════════════════════════════════════════════════════
 with tab_turno:
-    st.header("Registrar Control Nocturno", divider="blue")
+    st.header("Registrar Turno", divider="blue")
+
+    # El ingeniero se elige fuera del form para que el selector de guardia
+    # se actualice dinámicamente antes de abrir el formulario.
+    ingeniero = st.selectbox("Ingeniero", INGENIEROS, key="ing_turno")
+
+    guardias_disponibles = ["FBM"]
+    if ingeniero in INGENIEROS_TRANSPORTE:
+        guardias_disponibles.append("Transporte")
 
     with st.form("form_turno", clear_on_submit=True):
-        ingeniero = st.selectbox("Ingeniero", INGENIEROS)
+        guardia = st.selectbox("Guardia", guardias_disponibles)
         fecha = st.date_input("Fecha del turno", value=date.today())
+
+        col_hi, col_hf = st.columns(2)
+        with col_hi:
+            hora_inicio = st.time_input("Hora de inicio", value=time(22, 0))
+        with col_hf:
+            hora_fin = st.time_input("Hora de fin", value=time(2, 0))
+
         descripcion = st.text_area(
             "Descripción (opcional)",
             placeholder="Ej: Deploy versión 3.2 en producción…",
         )
 
-        st.info(f"📅 **{fecha.strftime('%A %d/%m/%Y')}** → **+{DIAS_POR_CC} día compensatorio**")
+        # Calcular duración (soporta turnos que cruzan medianoche)
+        inicio_dt = datetime.combine(fecha, hora_inicio)
+        fin_dt = datetime.combine(fecha, hora_fin)
+        if fin_dt <= inicio_dt:
+            fin_dt += timedelta(days=1)
+        duracion_h = (fin_dt - inicio_dt).total_seconds() / 3600
+        califica = duracion_h > 3
+        dias_a_otorgar = DIAS_POR_CC if califica else 0
+
+        if califica:
+            st.info(
+                f"⏱ Duración: **{duracion_h:.1f} h** → "
+                f"**+{dias_a_otorgar} día compensatorio**"
+            )
+        else:
+            st.warning(
+                f"⏱ Duración: **{duracion_h:.1f} h** → "
+                f"No otorga compensatorio (mínimo 3 h)"
+            )
 
         submitted = st.form_submit_button(
             "💾 Guardar turno", use_container_width=True, type="primary"
         )
 
     if submitted:
+        tipo = "Control Nocturno" if guardia == "FBM" else "Control Transporte"
         insertar_control(
             ingeniero, fecha,
-            tipo="Control Nocturno",
-            dias_ganados=DIAS_POR_CC,
+            tipo=tipo,
+            dias_ganados=dias_a_otorgar,
             dias_usados=0,
             descripcion=descripcion,
         )
-        st.balloons()
-        st.success(
-            f"✅ Turno de **{ingeniero}** del **{fecha.strftime('%d/%m/%Y')}** "
-            f"registrado correctamente (+{DIAS_POR_CC} día)."
-        )
+        if dias_a_otorgar > 0:
+            st.balloons()
+            st.success(
+                f"✅ Turno **{guardia}** de **{ingeniero}** del "
+                f"**{fecha.strftime('%d/%m/%Y')}** registrado "
+                f"(+{dias_a_otorgar} día compensatorio)."
+            )
+        else:
+            st.success(
+                f"✅ Turno **{guardia}** de **{ingeniero}** del "
+                f"**{fecha.strftime('%d/%m/%Y')}** registrado "
+                f"(sin compensatorio — menos de 3 h)."
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -275,6 +319,8 @@ with tab_hist:
         def _color_tipo(val):
             if val == "Control Nocturno":
                 return "background-color: #1e3a5f; color: white"
+            if val == "Control Transporte":
+                return "background-color: #1e3a2f; color: white"
             if val == "Canje de Día":
                 return "background-color: #3a1e1e; color: white"
             return ""
